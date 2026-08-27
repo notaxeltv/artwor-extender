@@ -34,6 +34,45 @@
             <input id="file-input" type="file" accept="image/png,image/jpeg" class="hidden-input" />
           </div>
 
+          <div id="cleanup-section" class="field cleanup-section hidden">
+            <div class="cleanup-header">
+              <label>Rimuovi testo/cornice (opzionale)</label>
+              <button
+                id="cleanup-toggle-button"
+                type="button"
+                class="btn btn-secondary btn-small"
+              >
+                ✂️ Disegna aree da rimuovere
+              </button>
+            </div>
+
+            <div id="cleanup-editor" class="cleanup-editor hidden">
+              <p class="cleanup-hint">
+                Disegna con il mouse uno o più rettangoli sopra testo, loghi
+                o cornici da eliminare: verranno rigenerati da Ollama in
+                coerenza con lo stile circostante, prima dell'estensione.
+              </p>
+              <div class="cleanup-canvas-wrapper">
+                <canvas id="cleanup-canvas"></canvas>
+              </div>
+              <div class="cleanup-actions">
+                <button id="cleanup-undo-button" type="button" class="btn btn-secondary btn-small">
+                  ↩️ Annulla ultimo
+                </button>
+                <button id="cleanup-clear-button" type="button" class="btn btn-secondary btn-small">
+                  🗑️ Pulisci selezione
+                </button>
+                <button id="cleanup-reset-button" type="button" class="btn btn-secondary btn-small">
+                  🔄 Ripristina originale
+                </button>
+              </div>
+              <button id="cleanup-apply-button" type="button" class="btn btn-primary btn-small">
+                🧹 Rimuovi elementi selezionati
+              </button>
+              <p id="cleanup-status" class="status-message"></p>
+            </div>
+          </div>
+
           <div class="field">
             <label for="expand-ratio">
               Estensione per lato: <span id="expand-ratio-value">20%</span>

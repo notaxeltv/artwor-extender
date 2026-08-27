@@ -14,8 +14,8 @@ avviene sulla macchina dell'utente.
 ```
 .
 ├── backend/
-│   ├── main.py            # App FastAPI (endpoint /health, /outpaint)
-│   ├── outpaint.py        # Logica di outpainting (canvas + mask + Ollama)
+│   ├── main.py            # App FastAPI (endpoint /health, /outpaint, /remove-elements)
+│   ├── outpaint.py        # Logica di outpainting e rimozione elementi (canvas/maschera + Ollama)
 │   ├── ollama_client.py   # Client HTTP per l'API locale di Ollama
 │   ├── prompts.py         # Prompt dedicati per Pokémon / One Piece / Magic
 │   └── requirements.txt
@@ -106,6 +106,11 @@ che il backend sul punto 1 sia già in esecuzione su `http://localhost:8000`).
 3. Avvia il frontend: `cd frontend && npm start`.
 4. Nella finestra dell'app:
    - Trascina un'immagine dell'artwork della carta (PNG/JPG) nella dropzone.
+   - (Opzionale, consigliato per carte "full art" con testo sovrapposto
+     all'illustrazione) Apri "Rimuovi testo/cornice", disegna con il mouse
+     rettangoli sopra testo/loghi/cornice da eliminare e clicca "Rimuovi
+     elementi selezionati": l'immagine "pulita" sostituirà l'originale come
+     input per l'estensione (vedi sezione dedicata più sotto).
    - Imposta la percentuale di estensione desiderata (10–60%) con lo slider.
    - Seleziona il tipo di TCG (Pokémon / One Piece / Magic) per adattare il
      prompt automaticamente.
@@ -173,6 +178,41 @@ l'artwork originale. È possibile sovrascrivere completamente il prompt
 tramite il campo "Prompt personalizzato" nella UI (o il parametro
 `custom_prompt` dell'API).
 
+## Rimuovere testo, loghi e cornici prima dell'estensione
+
+Molte carte (soprattutto le versioni "full art"/"ex") hanno il box di
+testo (nome, PS, descrizione dell'attacco, debolezza/resistenza/ritirata)
+sovrapposto direttamente sull'illustrazione, non in una fascia separata.
+Se questi elementi sono vicini al margine da estendere, il modello di
+diffusione può "continuare" il testo o la cornice nel nuovo bordo generato
+invece di produrre puro sfondo/paesaggio.
+
+Per questo l'app include uno strumento di **rimozione manuale guidata**
+(pannello "Rimuovi testo/cornice" nella UI, endpoint `POST
+/remove-elements` nel backend):
+
+1. Disegni con il mouse uno o più rettangoli sopra le zone da eliminare
+   (testo, loghi, watermark, cornice della carta).
+2. Il frontend costruisce una maschera bianco/nero della stessa dimensione
+   dell'immagine (bianco = area da rimuovere e rigenerare, nero = area da
+   preservare) e la invia insieme all'immagine originale al backend.
+3. Il backend invia l'immagine intera a Ollama con un prompt che chiede di
+   ricostruire in modo coerente le zone mascherate, senza aggiungere nuovo
+   testo, poi compone il risultato finale usando la maschera: l'area **non**
+   selezionata resta pixel-per-pixel identica all'originale.
+4. L'immagine "pulita" ottenuta sostituisce l'input per la successiva fase
+   di outpainting (o può essere scaricata a sé).
+
+Puoi ripetere l'operazione più volte (es. prima rimuovi il box di testo,
+poi la cornice) e usare "Ripristina originale" per tornare all'immagine
+caricata inizialmente in qualsiasi momento.
+
+Nota: come per l'outpainting, la qualità del risultato dipende dal
+modello Ollama usato — non tutti i modelli gestiscono bene la
+rimozione/ricostruzione di aree arbitrarie della stessa immagine
+(img2img "inpainting"); se noti risultati scadenti, prova un modello
+diverso o riduci l'area mascherata a ciò che è strettamente necessario.
+
 ## Come cambiare il modello Ollama
 
 Il modello predefinito è `flux2-klein:4b` (costante `DEFAULT_MODEL` in
@@ -197,6 +237,11 @@ all'hardware disponibile (CPU vs GPU, quantità di RAM/VRAM).
 - I file temporanei di input/output vengono salvati nella cartella
   temporanea di sistema (`tempfile.gettempdir()`), quindi il codice
   funziona senza modifiche su Windows, macOS e Linux.
+- `outpaint()` e `remove_elements()` condividono la stessa funzione interna
+  `generate_and_composite()` (canvas/immagine + maschera → chiamata a
+  Ollama → composizione locale): cambia solo come viene costruita la
+  maschera (bordi calcolati automaticamente vs. rettangoli disegnati
+  dall'utente).
 - La risposta dell'endpoint `/api/generate` di Ollama non ha un formato
   standard per i modelli di diffusione/immagine; `ollama_client.py` prova a
   estrarre il base64 dell'immagine da diversi campi plausibili della

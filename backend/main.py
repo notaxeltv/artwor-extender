@@ -11,6 +11,7 @@ Tutto avviene in locale: nessuna chiamata a servizi cloud esterni.
 
 from __future__ import annotations
 
+import io
 import logging
 import tempfile
 import uuid
@@ -21,8 +22,10 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
+from PIL import Image
+
 from ollama_client import OllamaError
-from outpaint import DEFAULT_MODEL, outpaint
+from outpaint import DEFAULT_MODEL, outpaint, remove_elements
 from prompts import get_prompt
 
 logging.basicConfig(
@@ -147,6 +150,106 @@ async def outpaint_endpoint(
         path=result_path,
         media_type="image/png",
         filename="outpainted_result.png",
+    )
+
+
+@app.post("/remove-elements")
+async def remove_elements_endpoint(
+    file: UploadFile = File(..., description="Immagine originale (PNG/JPG)"),
+    mask: UploadFile = File(
+        ...,
+        description=(
+            "Maschera PNG in scala di grigi, stessa dimensione dell'immagine: "
+            "bianco = area da rimuovere/rigenerare, nero = area da preservare"
+        ),
+    ),
+    model: Optional[str] = Form(None, description="Nome del modello Ollama da usare"),
+    custom_prompt: Optional[str] = Form(
+        None, description="Prompt personalizzato (opzionale)"
+    ),
+) -> FileResponse:
+    """Rimuove testo/cornici/loghi da un'immagine tramite una maschera manuale.
+
+    Riceve l'immagine originale e una maschera (disegnata dall'utente lato
+    frontend, es. rettangoli sopra il box di testo o la cornice della
+    carta), e restituisce l'immagine "pulita" con quelle aree rigenerate da
+    Ollama in modo coerente con lo stile circostante. Utile come passo di
+    pre-elaborazione prima dell'outpainting, per evitare che il modello
+    "continui" scritte o cornici nel nuovo bordo generato.
+    """
+    if file.content_type not in _ALLOWED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Tipo di file non supportato: {file.content_type}. "
+                f"Formati accettati: PNG, JPG."
+            ),
+        )
+    if mask.content_type not in _ALLOWED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Tipo di file non supportato per la maschera: {mask.content_type}. "
+                f"Formati accettati: PNG, JPG."
+            ),
+        )
+
+    request_id = uuid.uuid4().hex
+    input_suffix = Path(file.filename or "input.png").suffix or ".png"
+    input_path = _UPLOADS_DIR / f"{request_id}{input_suffix}"
+    output_path = _OUTPUTS_DIR / f"{request_id}_cleaned.png"
+
+    try:
+        contents = await file.read()
+        mask_contents = await mask.read()
+        if not contents or not mask_contents:
+            raise HTTPException(
+                status_code=400, detail="File immagine o maschera vuoti."
+            )
+        input_path.write_bytes(contents)
+        mask_image = Image.open(io.BytesIO(mask_contents))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Errore durante la lettura dei file caricati.")
+        raise HTTPException(
+            status_code=400, detail=f"Impossibile leggere i file caricati: {exc}"
+        ) from exc
+
+    resolved_model = model.strip() if model and model.strip() else DEFAULT_MODEL
+
+    try:
+        logger.info(
+            "Richiesta /remove-elements: request_id=%s model=%s",
+            request_id,
+            resolved_model,
+        )
+        result_path = remove_elements(
+            input_path=input_path,
+            output_path=output_path,
+            mask=mask_image,
+            prompt=custom_prompt,
+            model=resolved_model,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except OllamaError as exc:
+        logger.error("Errore Ollama: %s", exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Errore inatteso durante la rimozione degli elementi.")
+        raise HTTPException(
+            status_code=500, detail=f"Errore interno durante la generazione: {exc}"
+        ) from exc
+    finally:
+        input_path.unlink(missing_ok=True)
+
+    return FileResponse(
+        path=result_path,
+        media_type="image/png",
+        filename="cleaned_result.png",
     )
 
 

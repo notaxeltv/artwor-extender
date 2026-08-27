@@ -17,6 +17,11 @@ Nota: la maschera viene calcolata e resa disponibile per eventuali usi
 futuri (es. un modello che supporti esplicitamente inpainting/outpainting
 con maschera), ed è comunque utile per compositare il risultato finale in
 modo che l'area originale non venga mai alterata dal modello.
+
+Questo modulo espone anche :func:`remove_elements`, che riusa lo stesso
+schema (immagine + maschera + Ollama + composizione) per rimuovere testo,
+cornici o loghi da un'immagine, usando però una maschera arbitraria
+disegnata dall'utente invece di quella generata automaticamente sui bordi.
 """
 
 from __future__ import annotations
@@ -143,6 +148,54 @@ def composite_preserving_original(
     return Image.composite(generated, original, mask)
 
 
+def generate_and_composite(
+    canvas: Image.Image,
+    mask: Image.Image,
+    prompt: str,
+    model: str,
+) -> Image.Image:
+    """Invia un canvas a Ollama e compone il risultato preservando l'originale.
+
+    Passo condiviso sia dall'outpainting (bordi) sia dalla rimozione di
+    elementi indesiderati (testo/cornici, con maschera arbitraria): si invia
+    l'intera immagine a Ollama con un prompt, e si usa la maschera solo
+    localmente per ricomporre il risultato finale, così l'area non
+    mascherata (nera) resta sempre identica all'originale.
+
+    Args:
+        canvas: Immagine (RGB) da inviare a Ollama come riferimento.
+        mask: Maschera in scala di grigi, stessa dimensione di ``canvas``:
+            nero (0) = area da preservare inalterata, bianco (255) = area
+            da sostituire con il contenuto generato da Ollama.
+        prompt: Prompt testuale da inviare a Ollama.
+        model: Nome del modello Ollama da usare.
+
+    Returns:
+        L'immagine finale risultante dalla composizione.
+
+    Raises:
+        ollama_client.OllamaError: Se la chiamata a Ollama fallisce.
+    """
+    canvas_b64 = image_to_base64_no_header(canvas)
+
+    try:
+        generated_b64 = call_ollama_generate(
+            model=model,
+            prompt=prompt,
+            image_base64=canvas_b64,
+        )
+    except OllamaError:
+        logger.exception("Chiamata a Ollama fallita.")
+        raise
+
+    generated_image = base64_to_image(generated_b64)
+
+    # Componiamo il risultato per garantire che l'area non mascherata non
+    # sia mai alterata, anche se il modello ha leggermente modificato quella
+    # zona durante la generazione.
+    return composite_preserving_original(generated_image, canvas, mask)
+
+
 def outpaint(
     input_path: str | Path,
     output_path: str | Path,
@@ -191,27 +244,94 @@ def outpaint(
     src = Image.open(input_path)
     canvas, mask = create_outpaint_canvas(src, expand_ratio)
 
-    canvas_b64 = image_to_base64_no_header(canvas)
-
-    try:
-        generated_b64 = call_ollama_generate(
-            model=model,
-            prompt=prompt,
-            image_base64=canvas_b64,
-        )
-    except OllamaError:
-        logger.exception("Chiamata a Ollama fallita durante l'outpainting.")
-        raise
-
-    generated_image = base64_to_image(generated_b64)
-
-    # Componiamo il risultato per garantire che l'artwork originale non sia
-    # mai alterato, anche se il modello ha leggermente modificato l'area
-    # centrale durante la generazione.
-    final_image = composite_preserving_original(generated_image, canvas, mask)
+    final_image = generate_and_composite(canvas, mask, prompt, model)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     final_image.save(output_path, format="PNG")
 
     logger.info("Outpainting completato: output=%s", output_path)
+    return output_path
+
+
+# Prompt di default usato per la rimozione di testo/cornici quando l'utente
+# non fornisce un prompt personalizzato. Rinforza esplicitamente di non
+# introdurre nuovo testo, per evitare che il modello "reinventi" scritte.
+DEFAULT_REMOVE_ELEMENTS_PROMPT = (
+    "Remove the text, lettering, logos, watermarks and card frame/border "
+    "marked by the mask. Seamlessly reconstruct the underlying artwork in "
+    "the same painterly/anime style, matching lighting and colors. Do not "
+    "add any new text, lettering, numbers or characters."
+)
+
+
+def remove_elements(
+    input_path: str | Path,
+    output_path: str | Path,
+    mask: Image.Image,
+    prompt: str | None = None,
+    model: str = DEFAULT_MODEL,
+) -> Path:
+    """Rimuove testo/cornici/loghi da un'immagine usando una maschera manuale.
+
+    A differenza di :func:`outpaint`, qui non si espande il canvas: si
+    invia l'immagine originale (stessa dimensione) a Ollama insieme a una
+    maschera disegnata dall'utente (es. rettangoli sopra il box di testo o
+    la cornice della carta). Il risultato finale è composto in modo che
+    solo l'area mascherata (bianca) venga sostituita con il contenuto
+    generato; il resto dell'immagine resta pixel-per-pixel identico.
+
+    Args:
+        input_path: Percorso dell'immagine di input (PNG/JPG).
+        output_path: Percorso dove salvare l'immagine "pulita".
+        mask: Maschera in scala di grigi (``L``), stessa dimensione
+            dell'immagine di input: bianco (255) = area da rimuovere e
+            rigenerare (es. testo/cornice), nero (0) = area da preservare.
+        prompt: Prompt testuale da usare. Se ``None``, viene usato
+            :data:`DEFAULT_REMOVE_ELEMENTS_PROMPT`.
+        model: Nome del modello Ollama da usare.
+
+    Returns:
+        Il percorso (``Path``) del file immagine "pulito" generato.
+
+    Raises:
+        ValueError: Se la maschera non ha la stessa dimensione dell'immagine
+            o se contiene un'area bianca vuota (nulla da rimuovere).
+        FileNotFoundError: Se ``input_path`` non esiste.
+        ollama_client.OllamaError: Se la chiamata a Ollama fallisce.
+    """
+    input_path = Path(input_path)
+    output_path = Path(output_path)
+
+    if not input_path.exists():
+        raise FileNotFoundError(f"Immagine di input non trovata: {input_path}")
+
+    src = Image.open(input_path).convert("RGB")
+    mask = mask.convert("L")
+
+    if mask.size != src.size:
+        raise ValueError(
+            f"La maschera ({mask.size}) deve avere la stessa dimensione "
+            f"dell'immagine di input ({src.size})."
+        )
+
+    if mask.getbbox() is None or not mask.getextrema()[1]:
+        raise ValueError(
+            "La maschera è completamente nera: nessuna area da rimuovere. "
+            "Disegna almeno un rettangolo sopra testo/cornice da eliminare."
+        )
+
+    resolved_prompt = prompt.strip() if prompt and prompt.strip() else (
+        DEFAULT_REMOVE_ELEMENTS_PROMPT
+    )
+
+    logger.info(
+        "Avvio rimozione elementi: input=%s model=%s", input_path, model
+    )
+
+    final_image = generate_and_composite(src, mask, resolved_prompt, model)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    final_image.save(output_path, format="PNG")
+
+    logger.info("Rimozione elementi completata: output=%s", output_path)
     return output_path
