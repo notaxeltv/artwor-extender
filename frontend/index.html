@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TCG Artwork Outpainting</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="app-header">
+        <h1>🎨 TCG Artwork Outpainting</h1>
+        <p class="subtitle">
+          Estendi l'artwork delle tue carte (Pokémon, One Piece, Magic) in
+          locale, con Ollama.
+        </p>
+      </header>
+
+      <main class="app-main">
+        <section class="panel panel-controls">
+          <div
+            id="dropzone"
+            class="dropzone"
+          >
+            <div id="dropzone-placeholder" class="dropzone-placeholder">
+              <span class="dropzone-icon">🖼️</span>
+              <p>Trascina qui un'immagine (PNG/JPG)</p>
+              <p class="dropzone-or">oppure</p>
+              <button id="browse-button" type="button" class="btn btn-secondary">
+                Scegli file...
+              </button>
+            </div>
+            <img id="dropzone-preview" class="dropzone-preview hidden" alt="Anteprima immagine caricata" />
+            <input id="file-input" type="file" accept="image/png,image/jpeg" class="hidden-input" />
+          </div>
+
+          <div class="field">
+            <label for="expand-ratio">
+              Estensione per lato: <span id="expand-ratio-value">20%</span>
+            </label>
+            <input
+              id="expand-ratio"
+              type="range"
+              min="10"
+              max="60"
+              step="5"
+              value="20"
+            />
+          </div>
+
+          <div class="field">
+            <label for="tgc-type">Tipo di TCG</label>
+            <select id="tgc-type">
+              <option value="pokemon">Pokémon</option>
+              <option value="onepiece">One Piece</option>
+              <option value="magic">Magic: The Gathering</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="model-name">Modello Ollama</label>
+            <input
+              id="model-name"
+              type="text"
+              placeholder="flux2-klein:4b"
+              value="flux2-klein:4b"
+            />
+          </div>
+
+          <div class="field">
+            <label for="custom-prompt">Prompt personalizzato (opzionale)</label>
+            <textarea
+              id="custom-prompt"
+              rows="3"
+              placeholder="Lascia vuoto per usare il prompt predefinito in base al tipo di TCG selezionato..."
+            ></textarea>
+          </div>
+
+          <button id="generate-button" type="button" class="btn btn-primary" disabled>
+            ✨ Genera
+          </button>
+
+          <p id="status-message" class="status-message"></p>
+        </section>
+
+        <section class="panel panel-preview">
+          <div class="preview-columns">
+            <div class="preview-column">
+              <h2>Originale</h2>
+              <div class="preview-box">
+                <img id="preview-original" class="preview-image hidden" alt="Immagine originale" />
+                <p id="preview-original-placeholder" class="preview-placeholder">
+                  Nessuna immagine caricata
+                </p>
+              </div>
+            </div>
+
+            <div class="preview-column">
+              <h2>Risultato esteso</h2>
+              <div class="preview-box">
+                <div id="loading-spinner" class="loading-spinner hidden">
+                  <div class="spinner"></div>
+                  <p>Generazione in corso... (dipende dal modello e dall'hardware)</p>
+                </div>
+                <img id="preview-result" class="preview-image hidden" alt="Immagine estesa generata" />
+                <p id="preview-result-placeholder" class="preview-placeholder">
+                  Il risultato apparirà qui dopo la generazione
+                </p>
+              </div>
+              <button id="download-button" type="button" class="btn btn-secondary hidden">
+                ⬇️ Scarica risultato
+              </button>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>

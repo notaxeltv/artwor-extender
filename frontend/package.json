@@ -1,0 +1,15 @@
+{
+  "name": "tcg-outpaint-frontend",
+  "version": "1.0.0",
+  "description": "App Electron per estendere (outpaint) artwork di carte TCG usando un backend locale FastAPI + Ollama",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron ."
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^31.0.0"
+  }
+}
